@@ -7,8 +7,8 @@ except ImportError:
 
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
 
-data_path = "data"
-user_name = "tema"
+data_path = u"data"
+user_name = u"peterlink"
 
 journal_pattern = "http://m.livejournal.com/read/user/{}"
 journal_profile_pattern = "http://{}.livejournal.com/profile"
@@ -26,6 +26,9 @@ journal_created_beginning = "<span>Created on"
 journal_created_pattern = re.compile("\d{1,2} (January|February|March|April|May|June|July|August|September|October|November|December) \d{4}")
 journal_posts_total_beginning = "<div class=\"b-profile-stat-value\">"
 journal_posts_total_pattern = re.compile("\d{1,10}")
+
+comments_thread_string = "<a class=\"b-more-button-inner\" href=\"http:\/\/m.livejournal.com\/read\/user\/{}/\d{1,}\/comments\/p1\/\d{1,}#comments\">".format(user_name)
+comments_thread_pattern = re.compile(comments_thread_string)
 
 non_existing_entry = "The page was not found!"
 
@@ -130,6 +133,7 @@ def get_all_user_posts_links(username):
                 if re.search(journal_entry_pattern, str(link_tag)):
                     link_for_first_post = re.search(journal_entry_pattern, str(link_tag)).group(0)
                     links_for_entries.append(link_for_first_post)
+                    posts_links_file.write(link_for_first_post + '\r\n')
                     break
 
             current_post_link = link_for_first_post
@@ -149,6 +153,8 @@ def get_all_user_posts_links(username):
                     if new_post_number + 1 == last_post_number:
                         print "all posts parsed"
                         break
+                else:
+                    break
 
     except HTTPError as message:
         print message
@@ -157,7 +163,8 @@ def get_all_user_posts_links(username):
 
 def get_comments_count(parsed_page):
     for tag in parsed_page.findAll("h2", {"id":"comments", "class":"p-head"}):
-        return int(re.search("\d{2,}", str(tag)).group(0))
+        return int(re.findall("\d{1,}", str(tag))[1])
+
 
 def process_post_commentators(entry_link):
     entry_link = entry_link.rstrip()
@@ -167,6 +174,16 @@ def process_post_commentators(entry_link):
 
     comments_count = get_comments_count(page_to_parse)
     print entry_link, comments_count
+
+    post_number = int(re.search("\d{1,}", entry_link).group(0))
+    if not os.path.exists(data_path + "/" + user_name + "_posts"):
+        os.makedirs(data_path + "/" + user_name + "_posts")
+    comments_file = open(data_path + "/" + user_name + "_posts" + "/" + str(post_number), "w")
+
+
+
+    comments_file.close()
+
 
 def process_one_user(username):
     all_user_posts_links = get_all_user_posts_links(username)
