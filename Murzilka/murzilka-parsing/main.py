@@ -1,4 +1,4 @@
-import os, re, pdb
+import os, re, time
 
 try:
     from bs4 import BeautifulSoup
@@ -27,8 +27,8 @@ journal_created_pattern = re.compile("\d{1,2} (January|February|March|April|May|
 journal_posts_total_beginning = "<div class=\"b-profile-stat-value\">"
 journal_posts_total_pattern = re.compile("\d{1,10}")
 
-comments_thread_string = "<a class=\"b-more-button-inner\" href=\"http:\/\/m.livejournal.com\/read\/user\/{}/\d{1,}\/comments\/p1\/\d{1,}#comments\">".format(user_name)
-comments_thread_pattern = re.compile(comments_thread_string)
+#comments_thread_string = "<a class=\"b-more-button-inner\" href=\"http:\/\/m.livejournal.com\/read\/user\/{}/\d{1,}\/comments\/p1\/\d{1,}#comments\">".format(user_name)
+#comments_thread_pattern = re.compile(comments_thread_string)
 
 non_existing_entry = "The page was not found!"
 
@@ -165,6 +165,10 @@ def get_comments_count(parsed_page):
     for tag in parsed_page.findAll("h2", {"id":"comments", "class":"p-head"}):
         return int(re.findall("\d{1,}", str(tag))[1])
 
+def get_post_date(parsed_page):
+    for tag in parsed_page.findAll("p", {"class":"item-meta"}):
+        date = "".join(tag.findAll(text=True)).lstrip().rstrip()
+        return time.strptime(date, "%b %d, %Y %H:%M")
 
 def process_post_commentators(entry_link):
     entry_link = entry_link.rstrip()
@@ -173,7 +177,8 @@ def process_post_commentators(entry_link):
     page_to_parse = BeautifulSoup(comments_page.body)
 
     comments_count = get_comments_count(page_to_parse)
-    print entry_link, comments_count
+    date = get_post_date(page_to_parse)
+    print entry_link, comments_count, date
 
     post_number = int(re.search("\d{1,}", entry_link).group(0))
     if not os.path.exists(data_path + "/" + user_name + "_posts"):
