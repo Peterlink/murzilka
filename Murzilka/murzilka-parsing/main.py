@@ -1,4 +1,4 @@
-import os, re, time
+import os, re, time, json
 
 try:
     from bs4 import BeautifulSoup
@@ -8,7 +8,7 @@ except ImportError:
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
 
 data_path = u"data"
-user_name = u"peterlink"
+user_name = u"tema"
 
 journal_pattern = "http://m.livejournal.com/read/user/{}"
 journal_profile_pattern = "http://{}.livejournal.com/profile"
@@ -26,9 +26,6 @@ journal_created_beginning = "<span>Created on"
 journal_created_pattern = re.compile("\d{1,2} (January|February|March|April|May|June|July|August|September|October|November|December) \d{4}")
 journal_posts_total_beginning = "<div class=\"b-profile-stat-value\">"
 journal_posts_total_pattern = re.compile("\d{1,10}")
-
-#comments_thread_string = "<a class=\"b-more-button-inner\" href=\"http:\/\/m.livejournal.com\/read\/user\/{}/\d{1,}\/comments\/p1\/\d{1,}#comments\">".format(user_name)
-#comments_thread_pattern = re.compile(comments_thread_string)
 
 non_existing_entry = "The page was not found!"
 
@@ -170,25 +167,87 @@ def get_post_date(parsed_page):
         date = "".join(tag.findAll(text=True)).lstrip().rstrip()
         return time.strptime(date, "%b %d, %Y %H:%M")
 
+def get_next_comments_page(parsed_page):
+    for tag in parsed_page.findAll("td", {"class":"paging-next"}):
+        if tag.find("a"):
+            return str(tag.find("a", href=True))
+    return ""
+
+class comment:
+    def __init__(self, author, date_time):
+        self.comment_author = author
+        self.timestamp = date_time
+
+def get_commentators(parsed_page, post_number, page_number):
+    a_tags = parsed_page.findAll("a")
+    threads_numbers = []
+    for thread_tag in a_tags:
+        try:
+            thread_tag["name"]
+            if str(thread_tag["name"]).isdigit():
+                threads_numbers.append(thread_tag["name"])
+        except:
+            continue
+    #all threads got
+    comments = []
+    global user_name
+    for thread_number in threads_numbers:
+        thread_link = "http://m.livejournal.com/read/user/{}/{}/comments/p{}/{}".format(user_name, post_number, page_number, thread_number)
+        get_request = HTTPRequest(thread_link, method="GET")
+        try:
+            thread_page = http_client.fetch(get_request)
+            page_to_parse = BeautifulSoup(thread_page.body)
+            users_tags = page_to_parse.findAll("strong", {"class":"lj-user"})
+            comments_dates = page_to_parse.findAll("span", {"class":"item-meta"})
+            for i in range(0, len(users_tags)):
+                comment_author = "".join(users_tags[i].findAll(text=True)).rstrip()
+                comment_date = "".join(comments_dates[i].findAll(text=True)).rstrip()
+                comment_date = time.strptime(comment_date, "%B %d %Y, %H:%M:%S UTC")
+                comments.append(comment(comment_author, comment_date))
+
+        except HTTPError as message:
+            print message, "get commentators retry"
+
+    return comments
+
+
 def process_post_commentators(entry_link):
     entry_link = entry_link.rstrip()
     get_request = HTTPRequest(entry_link + entry_comments_suffix, method = "GET")
-    comments_page = http_client.fetch(get_request)
-    page_to_parse = BeautifulSoup(comments_page.body)
+    try:
+        comments_page = http_client.fetch(get_request)
+        page_to_parse = BeautifulSoup(comments_page.body)
 
-    comments_count = get_comments_count(page_to_parse)
-    date = get_post_date(page_to_parse)
-    print entry_link, comments_count, date
+        comments_count = get_comments_count(page_to_parse)
+        date = get_post_date(page_to_parse)
+        print entry_link, comments_count, date
 
-    post_number = int(re.search("\d{1,}", entry_link).group(0))
-    if not os.path.exists(data_path + "/" + user_name + "_posts"):
-        os.makedirs(data_path + "/" + user_name + "_posts")
-    comments_file = open(data_path + "/" + user_name + "_posts" + "/" + str(post_number), "w")
+        post_number = int(re.search("\d{1,}", entry_link).group(0))
+        if not os.path.exists(data_path + "/" + user_name + "_posts"):
+            os.makedirs(data_path + "/" + user_name + "_posts")
+        comments_file = open(data_path + "/" + user_name + "_posts" + "/" + str(post_number), "w")
 
+        comments_page_number = 1
 
+        commentators = []
+        while get_next_comments_page(page_to_parse) != "":
+            next_comments_page_link = get_next_comments_page(page_to_parse)
+            next_comments_page_link = re.search("(read\/.+?)#comments", str(next_comments_page_link)).group(1)
 
-    comments_file.close()
+            commentators.append( get_commentators(page_to_parse, post_number, comments_page_number))
+            comments_page_number += 1
 
+            next_page_get_request = HTTPRequest("http://m.livejournal.com/" + next_comments_page_link, method = "GET")
+            try:
+                next_comments_page = http_client.fetch(next_page_get_request)
+                page_to_parse = BeautifulSoup(next_comments_page.body)
+            except HTTPError as error:
+                print error
+
+        comments_file.close()
+    except HTTPError as error:
+        print error
+        process_post_commentators(entry_link) # recursion
 
 def process_one_user(username):
     all_user_posts_links = get_all_user_posts_links(username)
