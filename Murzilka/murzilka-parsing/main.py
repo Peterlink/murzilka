@@ -8,7 +8,7 @@ except ImportError:
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
 
 data_path = u"data"
-user_name = u"tema"
+user_name = u"ntv"
 
 journal_pattern = "http://m.livejournal.com/read/user/{}"
 journal_profile_pattern = "http://{}.livejournal.com/profile"
@@ -175,10 +175,14 @@ def get_next_comments_page(parsed_page):
 
 class comment:
     def __init__(self, author, date_time):
-        self.comment_author = author
+        self.comment_author = author.rstrip().lstrip()
         self.timestamp = date_time
+    def author(self):
+        return self.comment_author
+    def time(self):
+        return self.timestamp
 
-def get_commentators(parsed_page, post_number, page_number):
+def get_commentators(parsed_page, post_number, page_number, commentators):
     a_tags = parsed_page.findAll("a")
     threads_numbers = []
     for thread_tag in a_tags:
@@ -189,7 +193,7 @@ def get_commentators(parsed_page, post_number, page_number):
         except:
             continue
     #all threads got
-    comments = []
+
     global user_name
     for thread_number in threads_numbers:
         thread_link = "http://m.livejournal.com/read/user/{}/{}/comments/p{}/{}".format(user_name, post_number, page_number, thread_number)
@@ -197,19 +201,36 @@ def get_commentators(parsed_page, post_number, page_number):
         try:
             thread_page = http_client.fetch(get_request)
             page_to_parse = BeautifulSoup(thread_page.body)
-            users_tags = page_to_parse.findAll("strong", {"class":"lj-user"})
+            header_divs = page_to_parse.findAll("div", {"class":"item-header"})
+            users_tags = []
+            for header_div in header_divs:
+                users_tags.append(header_div.find("strong", {"class":"lj-user"}))
             comments_dates = page_to_parse.findAll("span", {"class":"item-meta"})
             for i in range(0, len(users_tags)):
                 comment_author = "".join(users_tags[i].findAll(text=True)).rstrip()
                 comment_date = "".join(comments_dates[i].findAll(text=True)).rstrip()
                 comment_date = time.strptime(comment_date, "%B %d %Y, %H:%M:%S UTC")
-                comments.append(comment(comment_author, comment_date))
+                commentators.append(comment(comment_author, comment_date))
 
         except HTTPError as message:
             print message, "get commentators retry"
+            return get_commentators(parsed_page, post_number, page_number, commentators)
 
-    return comments
+    return commentators
 
+def check_file_with_comments(file_name, n_comments):
+    try:
+        file = open(file_name, "r")
+        n = len(file.readlines())
+        file.close()
+        if n/2 == n_comments:
+            return True;
+        else:
+            print file_name + "-not OK"
+            return False;
+    except:
+        print "no file with commentators"
+        return False;
 
 def process_post_commentators(entry_link):
     entry_link = entry_link.rstrip()
@@ -225,16 +246,25 @@ def process_post_commentators(entry_link):
         post_number = int(re.search("\d{1,}", entry_link).group(0))
         if not os.path.exists(data_path + "/" + user_name + "_posts"):
             os.makedirs(data_path + "/" + user_name + "_posts")
-        comments_file = open(data_path + "/" + user_name + "_posts" + "/" + str(post_number), "w")
 
-        comments_page_number = 1
+        file_with_comments_name = data_path + "/" + user_name + "_posts" + "/" + str(post_number)
+        if check_file_with_comments(file_with_comments_name, comments_count):
+            return
+        else:
+            comments_file = open(file_with_comments_name, "w")
+
+        comments_page_number = 0
 
         commentators = []
-        while get_next_comments_page(page_to_parse) != "":
+        not_all_comments_parsed = True
+        while not_all_comments_parsed:
             next_comments_page_link = get_next_comments_page(page_to_parse)
-            next_comments_page_link = re.search("(read\/.+?)#comments", str(next_comments_page_link)).group(1)
+            if str(next_comments_page_link) != "":
+                next_comments_page_link = re.search("(read\/.+?)#comments", str(next_comments_page_link)).group(1)
+            else:
+                break
 
-            commentators.append( get_commentators(page_to_parse, post_number, comments_page_number))
+            commentators = get_commentators(page_to_parse, post_number, comments_page_number, commentators)
             comments_page_number += 1
 
             next_page_get_request = HTTPRequest("http://m.livejournal.com/" + next_comments_page_link, method = "GET")
@@ -243,7 +273,17 @@ def process_post_commentators(entry_link):
                 page_to_parse = BeautifulSoup(next_comments_page.body)
             except HTTPError as error:
                 print error
+                continue
 
+            if get_next_comments_page(page_to_parse) == "":
+                commentators = get_commentators(page_to_parse, post_number, comments_page_number, commentators)
+                not_all_comments_parsed = False
+
+        for every_comment in commentators:
+            comments_file.write(every_comment.author())
+            comments_file.write("\r\n")
+            comments_file.write(str(every_comment.time()))
+            comments_file.write("\r\n")
         comments_file.close()
     except HTTPError as error:
         print error
