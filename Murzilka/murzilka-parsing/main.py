@@ -1,4 +1,4 @@
-import os, re, time, json
+import os, re, time, json, sys
 
 try:
     from bs4 import BeautifulSoup
@@ -8,7 +8,10 @@ except ImportError:
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
 
 data_path = u"data"
-user_name = u"ntv"
+if len(sys.argv) > 1:
+    user_name = sys.argv[1]
+else:
+    user_name = u"fritzmorgen"
 
 journal_pattern = "http://m.livejournal.com/read/user/{}"
 journal_profile_pattern = "http://{}.livejournal.com/profile"
@@ -223,7 +226,8 @@ def check_file_with_comments(file_name, n_comments):
         file = open(file_name, "r")
         n = len(file.readlines())
         file.close()
-        if n/2 == n_comments:
+#        if n/2 == n_comments:
+        if n/2 >= 1:
             return True;
         else:
             print file_name + "-not OK"
