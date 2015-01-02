@@ -1,4 +1,4 @@
-import re, os, time, glob, psycopg2
+import re, os, time, datetime, psycopg2
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
 
 try:
@@ -7,14 +7,9 @@ except ImportError:
     from BeautifulSoup import BeautifulSoup
 
 print "analysis"
-user_name = "borisakunin"
+bloggers = ["borisakunin", "ntv"]
 
 http_client = HTTPClient()
-
-data_directory_path = "/home/peterlink/Development/Python/Murzilka/murzilka-parsing/data/{}_posts/*".format(user_name)
-users_file_name = "all_users.txt"
-users_file = None
-users_set = set()
 
 '''
     db
@@ -24,14 +19,13 @@ def create_commentators_table():
     try:
         db_connection = psycopg2.connect(database='murzilka', user='postgres')
         cur = db_connection.cursor()
+        cur.execute("DROP TABLE commentators")
+        db_connection.commit()
         cur.execute("CREATE TABLE commentators ( username character(64), registration_date timestamp with time zone, posts_count integer, comments_in_count integer, comments_out_count integer, friends_in integer) WITH ( OIDS=FALSE ); ALTER TABLE commentators OWNER TO postgres;")
         db_connection.commit()
-        ver = cur.fetchone()
-        print ver
 
     except psycopg2.DatabaseError, e:
         print 'Error %s' % e
-
 
     finally:
         if db_connection:
@@ -41,10 +35,10 @@ def create_comments_table():
     try:
         db_connection = psycopg2.connect(database='murzilka', user='postgres')
         cur = db_connection.cursor()
+        cur.execute("DROP TABLE comments")
+        db_connection.commit()
         cur.execute("CREATE TABLE comments ( post_id bigint, author character(64), time timestamp with time zone) WITH ( OIDS=FALSE ); ALTER TABLE comments OWNER TO postgres;")
         db_connection.commit()
-        ver = cur.fetchone()
-        print ver
 
     except psycopg2.DatabaseError, e:
         print 'Error %s' % e
@@ -57,10 +51,10 @@ def create_posts_table():
     try:
         db_connection = psycopg2.connect(database='murzilka', user='postgres')
         cur = db_connection.cursor()
+        cur.execute("DROP TABLE posts")
+        db_connection.commit()
         cur.execute("CREATE TABLE posts(post_id bigserial PRIMARY KEY, user_name character(64), link character(128), time timestamp with time zone) WITH ( OIDS=FALSE); ALTER TABLE posts OWNER TO postgres; GRANT ALL ON TABLE posts TO postgres;")
         db_connection.commit()
-        ver = cur.fetchone()
-        print ver
 
     except psycopg2.DatabaseError, e:
         print 'Error %s' % e
@@ -78,21 +72,46 @@ def load_users():
         i = i + 2
     users_file.close()
 
-def load_comments_from_file_to_db(file_name):
-    comments_file = open(file_name, "r")
+def get_time_from_tm_dump(string):
+    numbers = re.findall("(\d+)", string)
+    year = int(numbers[0])
+    month = int(numbers[1])
+    day = int(numbers[2])
+    hour = int(numbers[3])
+    minutes = int(numbers[4])
+    seconds = int(numbers[5])
+
+    return datetime.datetime(year, month, day, hour, minutes, seconds)
+
+def load_comments_from_file_to_db(blogger, file_name):
+    comments_file = open("../murzilka-parsing/data/{}_posts/".format(blogger) + file_name, "r")
     strings = comments_file.readlines()
+
+    if len(strings) <= 2:
+        print "post without comments"
+        return
+
+    print "loading", len(strings)/2, "comments to db"
 
     try:
         db_connection = psycopg2.connect(database="murzilka", user="postgres")
         cursor = db_connection.cursor()
 
-        cursor.execute("INSERT INTO posts (user_name, link, time) VALUES ({}, {}, {})".format(user_name, file_name, strings[1]))
-        cursor.commit()
+        link = "m.livejournal.com/read/user/{}/{}".format(blogger, file_name)
 
-        for i in range(0, len(strings)):
-            cursor.execute("INSERT INTO comments VALUES()")
-            cursor.commit()
-            i = i + 2
+        comment_timestamp = get_time_from_tm_dump(strings[1])
+
+        cursor.execute("INSERT INTO posts (user_name, link, time) VALUES ('{}', '{}', '{}')".format(blogger, link, comment_timestamp))
+        db_connection.commit()
+
+        cursor.execute("SELECT max(post_id) FROM posts")
+        answer = str(cursor.fetchall()[0])
+        id = re.search("(\d+)", answer).group(0)
+        post_id = int(id)
+
+        for i in range(0, len(strings), 2):
+            cursor.execute("INSERT INTO comments (post_id, author, time) VALUES('{}', '{}', '{}')".format(post_id, strings[i].replace("\r\n", ""), get_time_from_tm_dump(strings[i+1])))
+            db_connection.commit()
 
 
     except psycopg2.DatabaseError, e:
@@ -181,13 +200,52 @@ def get_commentators_kernel(blogger):
 def add_user_to_db(user):
     pass
 
+def add_posts_and_comments_to_db(blogger):
+    for every_file in os.listdir("../murzilka-parsing/data/{}_posts".format(blogger)):
+        print "loading comments from", every_file, "to db"
+        load_comments_from_file_to_db(blogger, every_file)
+
+def get_all_posts_ids():
+    try:
+        db_connection = psycopg2.connect(database="murzilka", user="postgres")
+        cursor = db_connection.cursor()
+
+        cursor.execute("SELECT post_id FROM posts")
+        print cursor.fetchall()
+
+    except psycopg2.DatabaseError, e:
+        print e;
+
+    finally:
+        if db_connection:
+            db_connection.close()
+
+def get_all_comments_for_post_id(post_id):
+    try:
+        db_connection = psycopg2.connect(database="murzilka", user="postgres")
+        cursor = db_connection.cursor()
+
+        cursor.execute("SELECT * FROM comments WHERE post_id = {}".format(post_id))
+        print cursor.fetchall()
+
+    except psycopg2.DatabaseError, e:
+        print e;
+
+    finally:
+        if db_connection:
+            db_connection.close()
+
+def update_commentators():
+    posts_ids = get_all_posts_ids()
+
 create_posts_table()
 create_comments_table()
 create_commentators_table()
 
-for every_file in os.listdir("data/{}_posts".format(user_name)):
-    load_comments_from_file_to_db(every_file)
+for every_blogger in bloggers:
+    add_posts_and_comments_to_db(every_blogger)
+
+#update_commentators()
 
 
-
-get_posts_by_time_density(user_name)
+#get_posts_by_time_density(user_name)
