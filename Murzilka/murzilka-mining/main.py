@@ -2,6 +2,14 @@ import re, os, time, datetime, psycopg2, socket
 from tornado.httpclient import HTTPClient, HTTPRequest, HTTPResponse, HTTPError
 from socket import gethostbyname, gaierror
 
+import numpy as np
+import matplotlib
+matplotlib.use("GTK3Agg")
+import matplotlib.pyplot as plt
+
+import pylab
+pylab.show()
+
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -193,7 +201,10 @@ def get_user_info(user):
                 if date_string == u'Plus Account ':
                     date_string = span_tag.contents[3].contents[0].lstrip()
             else:
-                date_string = span_tag.contents[3].contents[0].lstrip()
+                try:
+                    date_string = span_tag.contents[3].contents[0].lstrip()
+                except IndexError as e:
+                    date_string = span_tag.contents[1].contents[0].lstrip()
             date_string = re.search(journal_created_pattern, str(date_string)).group(0)
             creation_date = time.strptime(date_string, "%d %B %Y")
             created = datetime.datetime(creation_date.tm_year, creation_date.tm_mon, creation_date.tm_mday)
@@ -272,19 +283,18 @@ def add_user_to_db_as_deleted(user, deletion_type):
 def add_user_to_db(user):
     if user_is_already_in_db(user):
         return
-    else:
-        retry = True
-        while retry:
-            try:
-                info = get_user_info(user)
-                retry = False
-            except (IOError, socket.gaierror) as e:
-                print "get user info retry", e
+    retry = True
+    while retry:
+        try:
+            info = get_user_info(user)
+            retry = False
+        except (IOError, socket.gaierror) as e:
+            print "get user info retry", e
 
-        if info:
-            cursor.execute("INSERT INTO commentators (username, registration_date, posts_count, comments_in_count, comments_out_count, friends_in) VALUES ('{}', '{}', '{}', '{}', '{}', '{}')".format(info.name, info.registration_date, info.posts_count, info.comments_in, info.comments_out, info.friends_in))
-            db_connection.commit()
-            print user, "added to db"
+    if info:
+        cursor.execute("INSERT INTO commentators (username, registration_date, posts_count, comments_in_count, comments_out_count, friends_in) VALUES ('{}', '{}', '{}', '{}', '{}', '{}')".format(info.name, info.registration_date, info.posts_count, info.comments_in, info.comments_out, info.friends_in))
+        db_connection.commit()
+        print user, "added to db"
 
 def add_posts_and_comments_to_db(blogger):
     for every_file in os.listdir("../murzilka-parsing/data/{}_posts".format(blogger)):
@@ -368,6 +378,44 @@ def update_commentators():
 
     print "update complete"
 
+'''
+plot
+'''
+
+def plot_reg_dates_and_comments_ratio():
+    global db_connection, cursor
+    try:
+        db_connection = psycopg2.connect(database="murzilka", user="postgres")
+        cursor = db_connection.cursor()
+
+        all_post_ids = []
+#        cursor.execute("SELECT username, registration_date, posts_count, comments_in_count, comments_out_count, friends_in FROM commentators")
+        cursor.execute("SELECT username, registration_date, posts_count, comments_in_count, comments_out_count, friends_in FROM commentators WHERE registration_date > '2010-01-01'")
+        users_staff = cursor.fetchall()
+
+        x = []
+        y = []
+
+        for every_user in users_staff:
+            if not every_user[0].startswith("ext_"):
+                print every_user[0], every_user[1], every_user[2], every_user[3], every_user[4], every_user[5]
+                if not every_user[5] == 0:
+#                    y.append(every_user[3]/every_user[2]*every_user[4])
+                    y.append(every_user[5])
+                    x.append(every_user[1])
+
+        plt.scatter(x, y, marker=".")
+        plt.show()
+
+    except psycopg2.DatabaseError, e:
+        print e;
+
+    finally:
+        if db_connection:
+            db_connection.close()
+
+
+
 #create_posts_table()
 #create_comments_table()
 #create_commentators_table()
@@ -376,7 +424,8 @@ def update_commentators():
 #for every_blogger in bloggers:
 #    add_posts_and_comments_to_db(every_blogger)
 
-update_commentators()
+#update_commentators()
 
+plot_reg_dates_and_comments_ratio()
 
 #get_posts_by_time_density(user_name)
